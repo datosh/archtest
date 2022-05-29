@@ -3,9 +3,9 @@ package archtest
 import (
 	"container/list"
 	"fmt"
-	"go/build"
-	"golang.org/x/tools/go/packages"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 type PackageTest struct {
@@ -121,7 +121,6 @@ func (t PackageTest) findDeps(packages []string, filter depFilter) <-chan *dep {
 
 		importCache := map[string]struct{}{}
 		for _, p := range t.expand(packages) {
-
 			t.read(c, &dep{name: p, parent: nil}, importCache, filter)
 		}
 	}()
@@ -131,8 +130,11 @@ func (t PackageTest) findDeps(packages []string, filter depFilter) <-chan *dep {
 func (t *PackageTest) read(pChan chan *dep, d *dep, cache map[string]struct{}, filter depFilter) {
 	queue := list.New()
 
-	context := build.Default
-	var importMode build.ImportMode
+	cfg := &packages.Config{
+		Mode:       packages.NeedName | packages.NeedImports,
+		Tests:      t.includeTests,
+		BuildFlags: []string{},
+	}
 
 	queue.PushBack(d)
 	for queue.Len() > 0 {
@@ -147,28 +149,18 @@ func (t *PackageTest) read(pChan chan *dep, d *dep, cache map[string]struct{}, f
 		cache[d.name] = struct{}{}
 		pChan <- d
 
-		pkg, err := context.Import(d.name, ".", importMode)
-		if err != nil {
-			e := fmt.Sprintf("Error reading: %s", d.name)
-			t.t.Error(e)
+		// pkg, err := context.Import(d.name, ".", importMode)
+		pkgs, err := packages.Load(cfg, d.name)
+		for _, pkg := range pkgs {
+			if err != nil {
+				e := fmt.Sprintf("Error reading: %s", d.name)
+				t.t.Error(e)
 
-			continue
-		}
-		if pkg.Goroot {
-			continue
-		}
-
-		for _, i := range pkg.Imports {
-			queue.PushBack(&dep{name: i, parent: d})
-		}
-
-		if t.includeTests {
-			for _, i := range pkg.TestImports {
-				queue.PushBack(&dep{name: i, parent: d})
+				continue
 			}
 
-			for _, i := range pkg.XTestImports {
-				queue.PushBack(&dep{name: i, parent: d.asxtest()})
+			for _, imported := range pkg.Imports {
+				queue.PushBack(&dep{name: imported.PkgPath, parent: d})
 			}
 		}
 	}
@@ -180,7 +172,7 @@ func (t PackageTest) expand(ps []string) []string {
 	}
 
 	cfg := &packages.Config{
-		Mode:       packages.LoadFiles,
+		Mode:       packages.NeedName,
 		Tests:      false,
 		BuildFlags: []string{},
 	}
@@ -208,7 +200,6 @@ func (t PackageTest) expand(ps []string) []string {
 }
 
 func (t PackageTest) skip(cache map[string]struct{}, pkg string) bool {
-
 	if _, excluded := t.ignored[pkg]; excluded ||
 		pkg == "C" {
 		return true
@@ -216,7 +207,6 @@ func (t PackageTest) skip(cache map[string]struct{}, pkg string) bool {
 
 	_, seen := cache[pkg]
 	return seen
-
 }
 
 func needExpansion(ps []string) bool {
